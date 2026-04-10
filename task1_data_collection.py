@@ -1,45 +1,20 @@
 import requests
-
-#Make the API Calls
-
-url = "https://hacker-news.firebaseio.com/v0/topstories.json"
-headers = {"User-Agent": "TrendPulse/1.0"}
-
-response = requests.get(url, headers=headers)
-story_ids = response.json()
-
-story_ids = response.json()[:500]
-print(story_ids)
-
-print(len(story_ids))  # should print 500
-
-#first 500 stories
-import requests
-
-headers = {"User-Agent": "TrendPulse/1.0"}
-
-for story_id in story_ids[:500]:
-    url = f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json"
-
-    try:
-        response = requests.get(url, headers=headers)
-        story = response.json()
-
-        if story and "title" in story:
-            print(story["title"])
-
-    except Exception:
-        print(f"Error fetching story {story_id}")
-
-#Divided by categories
-import requests
 import time
+import os
+import json
 from datetime import datetime
 
-# -----------------------------
-# CATEGORY KEYWORDS
-# -----------------------------
-CATEGORY_KEYWORDS = {
+# ---------------------------------------------
+# CONFIGURATION
+# ---------------------------------------------
+
+HEADERS = {"User-Agent": "TrendPulse/1.0"}
+
+TOP_STORIES_URL = "https://hacker-news.firebaseio.com/v0/topstories.json"
+ITEM_URL = "https://hacker-news.firebaseio.com/v0/item/{}.json"
+
+# Category keywords (case-insensitive)
+CATEGORIES = {
     "technology": ["ai", "software", "tech", "code", "computer", "data", "cloud", "api", "gpu", "llm"],
     "worldnews": ["war", "government", "country", "president", "election", "climate", "attack", "global"],
     "sports": ["nfl", "nba", "fifa", "sport", "game", "team", "player", "league", "championship"],
@@ -47,165 +22,115 @@ CATEGORY_KEYWORDS = {
     "entertainment": ["movie", "film", "music", "netflix", "game", "book", "show", "award", "streaming"]
 }
 
-# -----------------------------
-# STORAGE
-# -----------------------------
-categories = {
-    "technology": [],
-    "worldnews": [],
-    "sports": [],
-    "science": [],
-    "entertainment": []
-}
+MAX_PER_CATEGORY = 25
 
-filled = set()
 
-# -----------------------------
-# FETCH SINGLE STORY
-# -----------------------------
-def get_story(story_id):
-    url = f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json"
+# ---------------------------------------------
+# FUNCTION: FETCH TOP STORY IDS
+# ---------------------------------------------
+def fetch_top_story_ids(limit=500):
     try:
-        response = requests.get(url)
-        if response.status_code == 200:
-            return response.json()
-    except:
-        pass
-    return None
+        response = requests.get(TOP_STORIES_URL, headers=HEADERS)
+        response.raise_for_status()
+        return response.json()[:limit]
+    except Exception as e:
+        print(f"Error fetching top stories: {e}")
+        return []
 
-# -----------------------------
-# CATEGORY DETECTION
-# -----------------------------
+
+# ---------------------------------------------
+# FUNCTION: FETCH SINGLE STORY
+# ---------------------------------------------
+def fetch_story(story_id):
+    try:
+        response = requests.get(ITEM_URL.format(story_id), headers=HEADERS)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        print(f"Error fetching story {story_id}: {e}")
+        return None
+
+
+# ---------------------------------------------
+# FUNCTION: ASSIGN CATEGORY
+# ---------------------------------------------
 def get_category(title):
-    title = title.lower()
+    title_lower = title.lower()
 
-    for category, keywords in CATEGORY_KEYWORDS.items():
+    for category, keywords in CATEGORIES.items():
         for keyword in keywords:
-            if keyword in title:
+            if keyword in title_lower:
                 return category
+
     return None
 
-# -----------------------------
-# GET TOP STORY IDS
-# -----------------------------
-url = "https://hacker-news.firebaseio.com/v0/topstories.json"
-response = requests.get(url)
-story_ids = response.json()[:500]   # first 500 only
 
-# -----------------------------
-# MAIN LOOP
-# -----------------------------
-for story_id in story_ids:
+# ---------------------------------------------
+# MAIN SCRIPT
+# ---------------------------------------------
+def main():
+    top_ids = fetch_top_story_ids()
 
-    story = get_story(story_id)
+    # Storage for categorized stories
+    categorized_data = {cat: [] for cat in CATEGORIES.keys()}
 
-    if not story or "title" not in story:
-        continue
+    for story_id in top_ids:
+        story = fetch_story(story_id)
 
-    category = get_category(story["title"])
+        if not story or "title" not in story:
+            continue
 
-    if category is None:
-        continue
+        category = get_category(story["title"])
 
-    # limit per category
-    if len(categories[category]) >= 25:
-        continue
+        if category and len(categorized_data[category]) < MAX_PER_CATEGORY:
+            # Extract required fields
+            data = {
+                "post_id": story.get("id"),
+                "title": story.get("title"),
+                "category": category,
+                "score": story.get("score", 0),
+                "num_comments": story.get("descendants", 0),
+                "author": story.get("by", "unknown"),
+                "collected_at": datetime.now().isoformat()
+            }
 
-    #Extract the Fields
-    
-    data = {
-        "post_id": story.get("id"),
-        "title": story.get("title"),
-        "category": category,
-        "score": story.get("score"),
-        "num_comments": story.get("descendants"),
-        "author": story.get("by"),
-        "collected_at": datetime.now().isoformat()
-    }
+            categorized_data[category].append(data)
 
-    categories[category].append(data)
+        # Stop if all categories are filled
+        if all(len(categorized_data[cat]) >= MAX_PER_CATEGORY for cat in CATEGORIES):
+            break
 
-    # -----------------------------
-    # sleep when category completes
-    # -----------------------------
-    if len(categories[category]) == 25 and category not in filled:
-        print(f"{category} completed")
-        filled.add(category)
+    # ---------------------------------------------
+    # APPLY 2-SECOND DELAY PER CATEGORY (REQUIREMENT)
+    # ---------------------------------------------
+    for category in categorized_data:
         time.sleep(2)
 
-    # stop early when all full
-    if all(len(v) >= 25 for v in categories.values()):
-        break
+    # Combine all categories into one list
+    final_data = []
+    for cat in categorized_data:
+        final_data.extend(categorized_data[cat])
 
-# -----------------------------
-# FINAL OUTPUT
-# -----------------------------
-total = 0
+    # ---------------------------------------------
+    # SAVE TO JSON FILE
+    # ---------------------------------------------
+    if not os.path.exists("data"):
+        os.makedirs("data")
 
-for cat, items in categories.items():
-    print(f"\n{cat.upper()} ({len(items)} posts)")
-    for item in items:
-        print("-", item["title"])
-    total += len(items)
+    date_str = datetime.now().strftime("%Y%m%d")
+    file_path = f"data/trends_{date_str}.json"
 
-from datetime import datetime
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(final_data, f, indent=4)
 
-# assume categories, get_story, get_category already exist
-
-for story_id in story_ids:  # ✅ LOOP is REQUIRED
-
-    story = get_story(story_id)
-
-    if not story or "title" not in story:
-        continue
-
-    # STEP 1: categorize
-    category = get_category(story["title"])
-
-    if category is None:
-        continue
-
-    # STEP 2: extract fields
-    data = {
-        "post_id": story.get("id"),
-        "title": story.get("title"),
-        "category": category,
-        "score": story.get("score"),
-        "num_comments": story.get("descendants"),
-        "author": story.get("by"),
-        "collected_at": datetime.now().isoformat()
-    }
+    # ---------------------------------------------
+    # OUTPUT
+    # ---------------------------------------------
+    print(f"Collected {len(final_data)} stories. Saved to {file_path}")
 
 
-    # store result
-    categories[category].append(data)
-
-#Save to a JSON File
-
-import os
-import json
-from datetime import datetime
-
-
-# CREATE DATA FOLDER
-
-if not os.path.exists("data"):
-    os.makedirs("data")
-
-
-# FILE NAME WITH DATE
-
-date_str = datetime.now().strftime("%Y%m%d")
-file_path = f"data/trends_{date_str}.json"
-
-# SAVE DATA
-
-with open(file_path, "w", encoding="utf-8") as f:
-    json.dump(final_stories, f, indent=4)
-
-
-# FINAL OUTPUT
-print("In first 500 stories we have only 90 stories belongs to the respective categories")
-print(f"Collected {len(final_stories)} stories. Saved to {file_path}")
-
-
+# ---------------------------------------------
+# RUN SCRIPT
+# ---------------------------------------------
+if __name__ == "__main__":
+    main()
