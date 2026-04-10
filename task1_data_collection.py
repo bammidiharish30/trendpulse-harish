@@ -1,136 +1,77 @@
-import requests
-import time
+
+import pandas as pd
 import os
-import json
 from datetime import datetime
 
 # ---------------------------------------------
-# CONFIGURATION
+# STEP 1: LOAD JSON FILE
 # ---------------------------------------------
 
-HEADERS = {"User-Agent": "TrendPulse/1.0"}
+# Get today's date to match Task 1 file
+date_str = datetime.now().strftime("%Y%m%d")
+file_path = f"data/trends_{date_str}.json"
 
-TOP_STORIES_URL = "https://hacker-news.firebaseio.com/v0/topstories.json"
-ITEM_URL = "https://hacker-news.firebaseio.com/v0/item/{}.json"
+# Check if file exists
+if not os.path.exists(file_path):
+    print(f"File not found: {file_path}")
+    exit()
 
-# Category keywords (case-insensitive)
-CATEGORIES = {
-    "technology": ["ai", "software", "tech", "code", "computer", "data", "cloud", "api", "gpu", "llm"],
-    "worldnews": ["war", "government", "country", "president", "election", "climate", "attack", "global"],
-    "sports": ["nfl", "nba", "fifa", "sport", "game", "team", "player", "league", "championship"],
-    "science": ["research", "study", "space", "physics", "biology", "discovery", "nasa", "genome"],
-    "entertainment": ["movie", "film", "music", "netflix", "game", "book", "show", "award", "streaming"]
-}
+# Load JSON into DataFrame
+df = pd.read_json(file_path)
 
-MAX_PER_CATEGORY = 25
+print(f"Loaded {len(df)} stories from {file_path}")
 
 
 # ---------------------------------------------
-# FUNCTION: FETCH TOP STORY IDS
+# STEP 2: CLEAN THE DATA
 # ---------------------------------------------
-def fetch_top_story_ids(limit=500):
-    try:
-        response = requests.get(TOP_STORIES_URL, headers=HEADERS)
-        response.raise_for_status()
-        return response.json()[:limit]
-    except Exception as e:
-        print(f"Error fetching top stories: {e}")
-        return []
 
+# 1. Remove duplicates based on post_id
+df = df.drop_duplicates(subset="post_id")
+print(f"After removing duplicates: {len(df)}")
 
-# ---------------------------------------------
-# FUNCTION: FETCH SINGLE STORY
-# ---------------------------------------------
-def fetch_story(story_id):
-    try:
-        response = requests.get(ITEM_URL.format(story_id), headers=HEADERS)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        print(f"Error fetching story {story_id}: {e}")
-        return None
+# 2. Remove rows with missing important values
+df = df.dropna(subset=["post_id", "title", "score"])
+print(f"After removing nulls: {len(df)}")
+
+# 3. Convert data types to correct format
+df["score"] = df["score"].astype(int)
+df["num_comments"] = df["num_comments"].fillna(0).astype(int)
+
+# 4. Remove low-quality stories (score < 5)
+df = df[df["score"] >= 5]
+print(f"After removing low scores: {len(df)}")
+
+# 5. Remove extra whitespace from title
+df["title"] = df["title"].str.strip()
 
 
 # ---------------------------------------------
-# FUNCTION: ASSIGN CATEGORY
+# STEP 3: SAVE CLEANED DATA AS CSV
 # ---------------------------------------------
-def get_category(title):
-    title_lower = title.lower()
 
-    for category, keywords in CATEGORIES.items():
-        for keyword in keywords:
-            if keyword in title_lower:
-                return category
+# Ensure data folder exists
+if not os.path.exists("data"):
+    os.makedirs("data")
 
-    return None
+output_path = "data/trends_clean.csv"
 
+# Save to CSV
+df.to_csv(output_path, index=False)
 
-# ---------------------------------------------
-# MAIN SCRIPT
-# ---------------------------------------------
-def main():
-    top_ids = fetch_top_story_ids()
-
-    # Storage for categorized stories
-    categorized_data = {cat: [] for cat in CATEGORIES.keys()}
-
-    for story_id in top_ids:
-        story = fetch_story(story_id)
-
-        if not story or "title" not in story:
-            continue
-
-        category = get_category(story["title"])
-
-        if category and len(categorized_data[category]) < MAX_PER_CATEGORY:
-            # Extract required fields
-            data = {
-                "post_id": story.get("id"),
-                "title": story.get("title"),
-                "category": category,
-                "score": story.get("score", 0),
-                "num_comments": story.get("descendants", 0),
-                "author": story.get("by", "unknown"),
-                "collected_at": datetime.now().isoformat()
-            }
-
-            categorized_data[category].append(data)
-
-        # Stop if all categories are filled
-        if all(len(categorized_data[cat]) >= MAX_PER_CATEGORY for cat in CATEGORIES):
-            break
-
-    # ---------------------------------------------
-    # APPLY 2-SECOND DELAY PER CATEGORY (REQUIREMENT)
-    # ---------------------------------------------
-    for category in categorized_data:
-        time.sleep(2)
-
-    # Combine all categories into one list
-    final_data = []
-    for cat in categorized_data:
-        final_data.extend(categorized_data[cat])
-
-    # ---------------------------------------------
-    # SAVE TO JSON FILE
-    # ---------------------------------------------
-    if not os.path.exists("data"):
-        os.makedirs("data")
-
-    date_str = datetime.now().strftime("%Y%m%d")
-    file_path = f"data/trends_{date_str}.json"
-
-    with open(file_path, "w", encoding="utf-8") as f:
-        json.dump(final_data, f, indent=4)
-
-    # ---------------------------------------------
-    # OUTPUT
-    # ---------------------------------------------
-    print(f"Collected {len(final_data)} stories. Saved to {file_path}")
+print(f"
+Saved {len(df)} rows to {output_path}")
 
 
 # ---------------------------------------------
-# RUN SCRIPT
+# STEP 4: PRINT SUMMARY (STORIES PER CATEGORY)
 # ---------------------------------------------
-if __name__ == "__main__":
-    main()
+
+print("
+Stories per category:")
+category_counts = df["category"].value_counts()
+
+for category, count in category_counts.items():
+    print(f"  {category:<15} {count}")
+
+
