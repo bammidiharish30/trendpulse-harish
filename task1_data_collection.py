@@ -1,5 +1,7 @@
 import requests
 
+#Make the API Calls
+
 url = "https://hacker-news.firebaseio.com/v0/topstories.json"
 headers = {"User-Agent": "TrendPulse/1.0"}
 
@@ -109,6 +111,8 @@ for story_id in story_ids:
     if len(categories[category]) >= 25:
         continue
 
+    #Extract the Fields
+    
     data = {
         "post_id": story.get("id"),
         "title": story.get("title"),
@@ -175,6 +179,8 @@ for story_id in story_ids:  # ✅ LOOP is REQUIRED
 
     # store result
     categories[category].append(data)
+
+#Save to a JSON File
 
 import os
 import json
